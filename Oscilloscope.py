@@ -13,11 +13,9 @@ class TektronixDPO7000:
     classdocs
     '''
 
-
     def __init__(self, gpib_address="3"):
         resource_manager = ResourceManager()
         available_gpib_ports = resource_manager.list_resources()
-        print(available_gpib_ports)
         oscilloscope_address = None
         for port_address in available_gpib_ports:
             if gpib_address in port_address:
@@ -26,11 +24,22 @@ class TektronixDPO7000:
         if oscilloscope_address is None:
             print("Cannot load Tek Scope")
             exit(1)
-        print(oscilloscope_address)
         self.oscilloscope = resource_manager.open_resource(oscilloscope_address)
         print(self.oscilloscope.query("*IDN?"))
-        self.oscilloscope.close()
 
+    def __reset(self):
+        """
+        @function: __reset
+        @summary: resets the state of the device
+        @param: None
+        @return: None
+        """
+        self.oscilloscope.write("*RST")
+        self.oscilloscope.write(":HEADER OFF;*CLS;DESE 255;*ESE 61;*SRE 48;")
+        self.oscilloscope.write(""":MEASU:REFL:METH PERC;:DAT:ENC RIB;
+        :DAT:STAR 1;:DATA:STOP 2000000000;""")
+        self.oscilloscope.write("*DDT #211:TRIG FORC;")
+        self.oscilloscope.write("VERB OFF;")
 
     def get_waveform(self):
         """
