@@ -51,9 +51,16 @@ class TektronixDPO7000:
     WAVEFORM_CHANNEL_4 = "CH4"
 
     def __init__(self, gpib_address="3"):
+        """
+        @function: __init__
+        @summary: Initializes comminication between the scope and python and resets device
+        @param: gpib_address is the address of the scope, similar for ethernet
+        @return: None
+        """
         resource_manager = ResourceManager()
         available_gpib_ports = resource_manager.list_resources()
         oscilloscope_address = None
+
         for port_address in available_gpib_ports:
             if gpib_address in port_address:
                 print("Found Scope Port")
@@ -61,6 +68,7 @@ class TektronixDPO7000:
         if oscilloscope_address is None:
             print("Cannot find Tek Scope")
             exit(1)
+
         self.oscilloscope = resource_manager.open_resource(oscilloscope_address)
         self.oscilloscope.clear()
         print(self.oscilloscope.query("*IDN?"))
@@ -80,21 +88,24 @@ class TektronixDPO7000:
         self.oscilloscope.write("*DDT #211:TRIG FORC;")
         self.oscilloscope.write("VERB OFF;")
 
-    def get_waveform(self, channel):
+    def get_waveform(self, channel, output_file="wf.csv"):
         """
         @function: get_waveform
-        @summary: retrieves a waveform from the oscilloscope
-        @param:
-        @return:
+        @summary: retrieves a waveform from the oscilloscope and stores the measurement to file
+        @param: channel to read out, as defined in constant WAVEFORM_CHANNEL_1, etc.
+            output_file: file to store comma-delimited waveform.
+        @return: tuple, containing two lists of time and measured voltage.
         """
+
         self.oscilloscope.timeout = 10000
         self.oscilloscope.write('DATA:SOU %s' % channel)
         self.oscilloscope.write('DATA:WIDTH 1')
         self.oscilloscope.write('DATA:ENC RPB')
-        ymult = float(self.oscilloscope.query('WFMPRE:YMULT?'))
-        yzero = float(self.oscilloscope.query('WFMPRE:YZERO?'))
-        yoff = float(self.oscilloscope.query('WFMPRE:YOFF?'))
-        xincr = float(self.oscilloscope.query('WFMPRE:XINCR?'))
+
+        y_scale_factor = float(self.oscilloscope.query('WFMPRE:YMULT?'))
+        y_zero = float(self.oscilloscope.query('WFMPRE:YZERO?'))
+        y_offset = float(self.oscilloscope.query('WFMPRE:YOFF?'))
+        x_increment = float(self.oscilloscope.query('WFMPRE:XINCR?'))
 
         self.oscilloscope.write('CURVE?')
         data = self.oscilloscope.read_raw()
@@ -103,13 +114,12 @@ class TektronixDPO7000:
         header_len = 2 + int(data[1])
         adc_wave = data[header_len:-1]
         adc_wave = np.array(struct.unpack('%sB' % len(adc_wave), adc_wave))
-
-        volts = (adc_wave - yoff) * ymult + yzero
-        time = np.arange(0, xincr * len(volts), xincr)
+        volts = (adc_wave - y_offset) * y_scale_factor + y_zero
+        time = np.arange(0, x_increment * len(volts), x_increment)
 
         # TODO: Implement more efficient binary-based storage
         payload = ""
-        with open("wf.csv", 'w') as f:
+        with open(output_file, 'w') as f:
             for indx, value in enumerate(volts.tolist()):
                 payload += (str(time.tolist()[indx])+","+str(volts.tolist()[indx])+"\n")
         f.write(payload)
@@ -149,6 +159,7 @@ class TektronixDPO7000:
         vertical_coupling = kwargs.get("vertical_coupling", self.CONFIG_COUPLING_DC)
         input_impedance = kwargs.get("input_impedance", self.CONFIG_TERMINATION_50)
         bandwidth = kwargs.get("bandwidth", self.CONFIG_BANDWIDTH_FULL)
+
         self.oscilloscope.write("%s:COUP %s;" % (channel, vertical_coupling))
         self.oscilloscope.write("%s:TER %s;" % (channel, input_impedance))
         self.oscilloscope.write("%s:SCA %s;" % (channel, vertical_range))
@@ -156,19 +167,21 @@ class TektronixDPO7000:
         self.oscilloscope.write("%s:BAN %s" % (channel, bandwidth))
         self.oscilloscope.write(":SEL%s ON;" % channel)
 
-    def configure_timebase(self, timebase="5", record_length="200000", position="0"):
+    def configure_timebase(self, seconds_per_point="5", record_length="200000", position="0"):
         """
-        @attention: timebase is in ps/pt
+        @attention: seconds_per_point is in ps/pt
         Docstring stub
-
         """
-        self.oscilloscope.write(":HOR:MODE:SCA %s" %(str(float(timebase)/10000000000.)))
+        self.oscilloscope.write(":HOR:MODE:SCA %s" %(str(float(seconds_per_point)/10e-9)))
         self.oscilloscope.write(":HOR:MODE MAN;:HOR:MODE:RECO %s" %(str(int(record_length))))
         self.oscilloscope.write(";:HOR:MAI:POS %s" %(str(float(position))))
 
     def close(self):
         """
-        asdf
+        @function: close
+        @summary: terminates the visa resource for this instance of tektronix
+        @param: none
+        @return: none
         """
         self.oscilloscope.close()
 
