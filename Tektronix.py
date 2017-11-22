@@ -7,14 +7,14 @@ __author__ = "Ric Rodriguez"
 __email__ = "rirrodri@ucsc.edu"
 
 import struct
-import pylab
-from visa import ResourceManager
+from pyvisa import ResourceManager
 import numpy as np
 
+
 class TektronixDPO7000:
-    '''
+    """
     classdocs
-    '''
+    """
     TRIGGER_CHANNEL_1 = "CH1"
     TRIGGER_CHANNEL_2 = "CH2"
     TRIGGER_CHANNEL_3 = "CH3"
@@ -80,11 +80,6 @@ class TektronixDPO7000:
         self.oscilloscope.write("*DDT #211:TRIG FORC;")
         self.oscilloscope.write("VERB OFF;")
 
-    def __parse_raw_data(self, raw_data):
-        num_digits = struct.unpack('B', raw_data[:2])
-        print(num_digits)
-
-
     def get_waveform(self, channel):
         """
         @function: get_waveform
@@ -93,7 +88,7 @@ class TektronixDPO7000:
         @return:
         """
         self.oscilloscope.timeout = 10000
-        self.oscilloscope.write('DATA:SOU %s' %(channel))
+        self.oscilloscope.write('DATA:SOU %s' % channel)
         self.oscilloscope.write('DATA:WIDTH 1')
         self.oscilloscope.write('DATA:ENC RPB')
         ymult = float(self.oscilloscope.query('WFMPRE:YMULT?'))
@@ -107,27 +102,31 @@ class TektronixDPO7000:
 
         header_len = 2 + int(data[1])
         adc_wave = data[header_len:-1]
-        adc_wave = np.array(struct.unpack('%sB' % len(adc_wave),adc_wave))
+        adc_wave = np.array(struct.unpack('%sB' % len(adc_wave), adc_wave))
 
-        volts = (adc_wave - yoff) * ymult  + yzero
+        volts = (adc_wave - yoff) * ymult + yzero
         time = np.arange(0, xincr * len(volts), xincr)
 
-        #with open("wf.csv", 'w') as f:
-        #    for indx, value in enumerate(Volts.tolist()):
-        #        f.write(str(Time.tolist()[indx])+","+str(Volts.tolist()[indx])+"\n")
-
+        # TODO: Implement more efficient binary-based storage
+        payload = ""
+        with open("wf.csv", 'w') as f:
+            for indx, value in enumerate(volts.tolist()):
+                payload += (str(time.tolist()[indx])+","+str(volts.tolist()[indx])+"\n")
+        f.write(payload)
         print("Done writing data")
+
+        return time.tolist(), volts.tolist()
 
     def configure_edge_trigger(self, source_channel, **kwargs):
         """
         @function: configure_edge_trigger
         @summary: Sets trigger parameters of the scope
-        @param source_channel: Channel source, as defined by class constant
-        @param **kwargs: Optional arguments, as follows:
-            coupling:
-            slope:
-            level:
-            event:
+        @param source_channel: Channel source, as defined by class constant TRIGGER_CHANNEL_1, etc.
+        @param kwargs: Optional arguments, as follows:
+            coupling: AC, DC, etc. coupling. Refer to manual. Invoke with TRIGGER_COUPLING_DC, etc.
+            slope: Rising, Falling or either slope. Invoke with TRIGGER_SLOPE_RISING, etc.
+            level: Specify trigger level in volts, as ascii or numerical, i.e. "2.0" or 2.0
+            event: Trigger event "A" or "B". Refer to manual for more details
         @return: None
         """
         trigger_event = kwargs.get("event", "A")
@@ -136,10 +135,10 @@ class TektronixDPO7000:
         trigger_level = str(kwargs.get("level", "-1.0"))
 
         self.oscilloscope.write(":CMDBATCH 0;:TRIG:%s:TYP EDGE;" % trigger_event)
-        self.oscilloscope.write(":TRIG:%s:EDGE:SOU %s;" %(trigger_event, source_channel))
-        self.oscilloscope.write(":TRIG:%s:LEV %s;" %(trigger_event, trigger_level))
-        self.oscilloscope.write(":TRIG:%s:EDGE:COUP %s;"%(trigger_event, trigger_coupling))
-        self.oscilloscope.write(":TRIG:%s:EDGE:SLO %s;"%(trigger_event, trigger_slope))
+        self.oscilloscope.write(":TRIG:%s:EDGE:SOU %s;" % (trigger_event, source_channel))
+        self.oscilloscope.write(":TRIG:%s:LEV %s;" % (trigger_event, trigger_level))
+        self.oscilloscope.write(":TRIG:%s:EDGE:COUP %s;" % (trigger_event, trigger_coupling))
+        self.oscilloscope.write(":TRIG:%s:EDGE:SLO %s;" % (trigger_event, trigger_slope))
 
     def configure_channel(self, channel, **kwargs):
         """
@@ -151,30 +150,34 @@ class TektronixDPO7000:
         input_impedance = kwargs.get("input_impedance", self.CONFIG_TERMINATION_50)
         bandwidth = kwargs.get("bandwidth", self.CONFIG_BANDWIDTH_FULL)
         self.oscilloscope.write("%s:COUP %s;" % (channel, vertical_coupling))
-        self.oscilloscope.write("%s:TER %s;" %(channel, input_impedance))
-        self.oscilloscope.write("%s:SCA %s;" %(channel, vertical_range))
-        self.oscilloscope.write("%s:OFFS %s" %(channel, vertical_offset))
-        self.oscilloscope.write("%s:BAN %s" %(channel, bandwidth))
-        self.oscilloscope.write(":SEL%s ON;" % (channel))
+        self.oscilloscope.write("%s:TER %s;" % (channel, input_impedance))
+        self.oscilloscope.write("%s:SCA %s;" % (channel, vertical_range))
+        self.oscilloscope.write("%s:OFFS %s" % (channel, vertical_offset))
+        self.oscilloscope.write("%s:BAN %s" % (channel, bandwidth))
+        self.oscilloscope.write(":SEL%s ON;" % channel)
 
-    def configure_timebase(self, timebase="5", record_length="200000", position = "0"):
+    def configure_timebase(self, timebase="5", record_length="200000", position="0"):
         """
         @attention: timebase is in ps/pt
         Docstring stub
+
         """
         self.oscilloscope.write(":HOR:MODE:SCA %s" %(str(float(timebase)/10000000000.)))
         self.oscilloscope.write(":HOR:MODE MAN;:HOR:MODE:RECO %s" %(str(int(record_length))))
         self.oscilloscope.write(";:HOR:MAI:POS %s" %(str(float(position))))
+
     def close(self):
         """
         asdf
         """
         self.oscilloscope.close()
 
+
 SCOPE = TektronixDPO7000()
+
 SCOPE.configure_channel(SCOPE.CONFIG_CHANNEL_1, vertical_range="0.01")
-#SCOPE.configure_channel(SCOPE.CONFIG_CHANNEL_2)
-#SCOPE.configure_channel(SCOPE.CONFIG_CHANNEL_3)
+# SCOPE.configure_channel(SCOPE.CONFIG_CHANNEL_2)
+# SCOPE.configure_channel(SCOPE.CONFIG_CHANNEL_3)
 SCOPE.configure_channel(SCOPE.CONFIG_CHANNEL_4)
 
 SCOPE.configure_edge_trigger(SCOPE.TRIGGER_CHANNEL_4, slope=SCOPE.TRIGGER_SLOPE_FALLING)
